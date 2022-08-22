@@ -58,6 +58,7 @@ pub struct TextEdit<'t> {
     font_selection: FontSelection,
     text_color: Option<Color32>,
     layouter: Option<&'t mut dyn FnMut(&Ui, &str, f32) -> Arc<Galley>>,
+    input_filter: Option<&'t mut dyn FnMut(&str) -> bool>,
     password: bool,
     frame: bool,
     margin: Vec2,
@@ -103,6 +104,7 @@ impl<'t> TextEdit<'t> {
             font_selection: Default::default(),
             text_color: None,
             layouter: None,
+            input_filter: None,
             password: false,
             frame: true,
             margin: vec2(4.0, 2.0),
@@ -193,6 +195,12 @@ impl<'t> TextEdit<'t> {
     /// ```
     pub fn layouter(mut self, layouter: &'t mut dyn FnMut(&Ui, &str, f32) -> Arc<Galley>) -> Self {
         self.layouter = Some(layouter);
+
+        self
+    }
+
+    pub fn input_filter(mut self, input_filter: &'t mut dyn FnMut(&str) -> bool) -> Self {
+        self.input_filter = Some(input_filter);
 
         self
     }
@@ -342,6 +350,7 @@ impl<'t> TextEdit<'t> {
             font_selection,
             text_color,
             layouter,
+            input_filter,
             password,
             frame: _,
             margin: _,
@@ -382,6 +391,11 @@ impl<'t> TextEdit<'t> {
         };
 
         let layouter = layouter.unwrap_or(&mut default_layouter);
+
+        let mut default_input_filter = |_: &str| {
+            true
+        };
+        let input_filter = input_filter.unwrap_or(&mut default_input_filter);
 
         let mut galley = layouter(ui, text.as_ref(), wrap_width);
 
@@ -512,6 +526,7 @@ impl<'t> TextEdit<'t> {
                 text,
                 &mut galley,
                 layouter,
+                input_filter,
                 id,
                 wrap_width,
                 multiline,
@@ -670,6 +685,7 @@ fn events(
     text: &mut dyn TextBuffer,
     galley: &mut Arc<Galley>,
     layouter: &mut dyn FnMut(&Ui, &str, f32) -> Arc<Galley>,
+    input_filter: &mut dyn FnMut(&str) -> bool,
     id: Id,
     wrap_width: f32,
     multiline: bool,
@@ -714,7 +730,7 @@ fn events(
                 }
             }
             Event::Paste(text_to_insert) => {
-                if !text_to_insert.is_empty() {
+                if !text_to_insert.is_empty() && input_filter(text_to_insert) {
                     let mut ccursor = delete_selected(text, &cursor_range);
                     insert_text(&mut ccursor, text, text_to_insert);
                     Some(CCursorRange::one(ccursor))
@@ -724,7 +740,7 @@ fn events(
             }
             Event::Text(text_to_insert) => {
                 // Newlines are handled by `Key::Enter`.
-                if !text_to_insert.is_empty() && text_to_insert != "\n" && text_to_insert != "\r" {
+                if !text_to_insert.is_empty() && text_to_insert != "\n" && text_to_insert != "\r" && input_filter(text_to_insert) {
                     let mut ccursor = delete_selected(text, &cursor_range);
                     insert_text(&mut ccursor, text, text_to_insert);
                     Some(CCursorRange::one(ccursor))
@@ -737,7 +753,7 @@ fn events(
                 pressed: true,
                 modifiers,
             } => {
-                if multiline && ui.memory().has_lock_focus(id) {
+                if multiline && ui.memory().has_lock_focus(id) && input_filter("\t") {
                     let mut ccursor = delete_selected(text, &cursor_range);
                     if modifiers.shift {
                         // TODO: support removing indentation over a selection?
@@ -795,7 +811,7 @@ fn events(
             }
 
             Event::CompositionUpdate(text_mark) => {
-                if !text_mark.is_empty() && text_mark != "\n" && text_mark != "\r" && state.has_ime
+                if !text_mark.is_empty() && text_mark != "\n" && text_mark != "\r" && state.has_ime && input_filter(text_mark)
                 {
                     let mut ccursor = delete_selected(text, &cursor_range);
                     let start_cursor = ccursor;
@@ -811,6 +827,7 @@ fn events(
                     && prediction != "\n"
                     && prediction != "\r"
                     && state.has_ime
+                    && input_filter(prediction)
                 {
                     state.has_ime = false;
                     let mut ccursor = delete_selected(text, &cursor_range);
