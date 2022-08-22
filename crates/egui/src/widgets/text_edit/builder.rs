@@ -71,6 +71,7 @@ pub struct TextEdit<'t> {
     font_selection: FontSelection,
     text_color: Option<Color32>,
     layouter: Option<&'t mut dyn FnMut(&Ui, &str, f32) -> Arc<Galley>>,
+    input_filter: Option<&'t mut dyn FnMut(&str) -> bool>,
     password: bool,
     frame: bool,
     margin: Margin,
@@ -124,6 +125,7 @@ impl<'t> TextEdit<'t> {
             font_selection: Default::default(),
             text_color: None,
             layouter: None,
+            input_filter: None,
             password: false,
             frame: true,
             margin: Margin::symmetric(4.0, 2.0),
@@ -271,6 +273,12 @@ impl<'t> TextEdit<'t> {
     #[inline]
     pub fn layouter(mut self, layouter: &'t mut dyn FnMut(&Ui, &str, f32) -> Arc<Galley>) -> Self {
         self.layouter = Some(layouter);
+
+        self
+    }
+
+    pub fn input_filter(mut self, input_filter: &'t mut dyn FnMut(&str) -> bool) -> Self {
+        self.input_filter = Some(input_filter);
 
         self
     }
@@ -476,6 +484,7 @@ impl<'t> TextEdit<'t> {
             font_selection,
             text_color,
             layouter,
+            input_filter,
             password,
             frame: _,
             margin,
@@ -525,6 +534,10 @@ impl<'t> TextEdit<'t> {
         let layouter = layouter.unwrap_or(&mut default_layouter);
 
         let mut galley = layouter(ui, text.as_str(), wrap_width);
+        let mut default_input_filter = |_: &str| {
+            true
+        };
+        let input_filter = input_filter.unwrap_or(&mut default_input_filter);
 
         let desired_inner_width = if clip_text {
             wrap_width // visual clipping with scroll in singleline input.
@@ -630,6 +643,7 @@ impl<'t> TextEdit<'t> {
                 text,
                 &mut galley,
                 layouter,
+                input_filter,
                 id,
                 wrap_width,
                 multiline,
@@ -877,6 +891,7 @@ fn events(
     text: &mut dyn TextBuffer,
     galley: &mut Arc<Galley>,
     layouter: &mut dyn FnMut(&Ui, &str, f32) -> Arc<Galley>,
+    input_filter: &mut dyn FnMut(&str) -> bool,
     id: Id,
     wrap_width: f32,
     multiline: bool,
@@ -935,7 +950,7 @@ fn events(
                 }
             }
             Event::Paste(text_to_insert) => {
-                if !text_to_insert.is_empty() {
+                if !text_to_insert.is_empty() && input_filter(text_to_insert) {
                     let mut ccursor = text.delete_selected(&cursor_range);
 
                     text.insert_text_at(&mut ccursor, text_to_insert, char_limit);
@@ -947,7 +962,7 @@ fn events(
             }
             Event::Text(text_to_insert) => {
                 // Newlines are handled by `Key::Enter`.
-                if !text_to_insert.is_empty() && text_to_insert != "\n" && text_to_insert != "\r" {
+                if !text_to_insert.is_empty() && text_to_insert != "\n" && text_to_insert != "\r" && input_filter(text_to_insert) {
                     let mut ccursor = text.delete_selected(&cursor_range);
 
                     text.insert_text_at(&mut ccursor, text_to_insert, char_limit);
@@ -962,7 +977,7 @@ fn events(
                 pressed: true,
                 modifiers,
                 ..
-            } if multiline => {
+            } if multiline && input_filter("\t")  => {
                 let mut ccursor = text.delete_selected(&cursor_range);
                 if modifiers.shift {
                     // TODO(emilk): support removing indentation over a selection?
@@ -1045,7 +1060,7 @@ fn events(
                     None
                 }
                 ImeEvent::Preedit(text_mark) => {
-                    if text_mark == "\n" || text_mark == "\r" {
+                    if text_mark == "\n" || text_mark == "\r" || !input_filter(text_mark) {
                         None
                     } else {
                         // Empty prediction can be produced when user press backspace
@@ -1060,7 +1075,7 @@ fn events(
                     }
                 }
                 ImeEvent::Commit(prediction) => {
-                    if prediction == "\n" || prediction == "\r" {
+                    if prediction == "\n" || prediction == "\r" || !input_filter(prediction) {
                         None
                     } else {
                         state.ime_enabled = false;
